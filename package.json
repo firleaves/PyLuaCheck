@@ -1,0 +1,71 @@
+{
+	"name": "pyluacheck",
+	"displayName": "PyLuaCheck",
+	"description": "py project lua check",
+	"version": "0.0.1",
+	"engines": {
+		"vscode": "^1.44.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onLanguage:lua"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"configuration": {
+			"type": "object",
+			"title": "pyluacheck",
+			"properties": {
+				"pyluacheck.checkClass": {
+					"type": "array",
+					"default": [
+						{
+							"name":"Base",
+							"overrideFunc":[
+								"Ctor","Destroy"
+							]
+						},
+						{
+							"name":"BaseUI",
+							"overrideFunc":[
+								"Ctor","Close"
+							]
+						}
+					],
+					"superClass": {
+						"name": "string",
+						"overrideFunc": "array"
+					}
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"lint": "eslint src --ext ts",
+		"watch": "tsc -watch -p ./",
+		"pretest": "npm run compile && npm run lint",
+		"test": "node ./out/test/runTest.js"
+	},
+	"devDependencies": {
+		"@types/glob": "^7.1.1",
+		"@types/luaparse": "^0.2.6",
+		"@types/mocha": "^7.0.2",
+		"@types/node": "^13.11.0",
+		"@types/vscode": "^1.44.0",
+		"@typescript-eslint/eslint-plugin": "^2.26.0",
+		"@typescript-eslint/parser": "^2.26.0",
+		"eslint": "^6.8.0",
+		"glob": "^7.1.6",
+		"mocha": "^7.1.1",
+		"typescript": "^3.8.3",
+		"vscode-test": "^1.3.0"
+	},
+	"dependencies": {
+		"luaparse": "^0.3.0"
+	},
+	"publisher": "someone"
+}
