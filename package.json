@@ -1,8 +1,8 @@
 {
 	"name": "pyluacheck",
 	"displayName": "PyLuaCheck",
-	"description": "py project lua check",
-	"version": "0.0.3",
+	"description": "检查重写父类函数,没有调用父类函数问题",
+	"version": "0.0.4",
 	"engines": {
 		"vscode": "^1.44.0"
 	},
@@ -32,6 +32,14 @@
 							"name":"UI.BaseUI",
 							"overrideFunc":[
 								"Ctor","Close"
+							]
+						},
+						{
+							"name": "Entity.EntityLogic.BaseEntity",
+							"overrideFunc": [
+								"Ctor",
+								"OnShow",
+								"OnHide"
 							]
 						}
 					],
@@ -68,5 +76,8 @@
 	"dependencies": {
 		"luaparse": "^0.3.0"
 	},
-	"publisher": "firleaves"
+	"publisher": "firleaves",
+	"repository": {
+        "url": "https://github.com/firleaves/PyLuaCheck.git"
+    }
 }
