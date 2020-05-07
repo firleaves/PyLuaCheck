@@ -30,18 +30,21 @@ class PyLuaCheck {
         try {
             let ast = luaparse.parse(content, { comments: false });
             // console.log(ast.body);
-            if (!this.isContainSuperClass(ast.body)) {
+            let checkClass = this.getNeeCheckSuperClass(ast.body);
+            if (checkClass.length === 0) {
                 return;
             }
-            ;
             this.clearErrorInfo(document);
-            this.checkOverrideFunc(ast.body, document);
+            this.checkOverrideFunc(ast.body, checkClass, document);
         }
         catch (error) {
             // console.log(error);
         }
     }
-    pushErrorInfo(doc, oriStr, errorInfo) {
+    pushDiagnosticInfo(doc, oriStr, errorInfo, level) {
+        if (oriStr === undefined || errorInfo === undefined || level === undefined) {
+            return;
+        }
         let diagnostics = this.diagnosticCollection.get(doc.uri);
         let newdiagnostisc = [];
         if (diagnostics) {
@@ -51,27 +54,19 @@ class PyLuaCheck {
         for (let lineIndex = 0; lineIndex < doc.lineCount; lineIndex++) {
             let lineOfText = doc.lineAt(lineIndex);
             if (lineOfText.text.includes(oriStr)) {
-                newdiagnostisc.push(this.createDiagnostic(doc, lineOfText, lineIndex, errorInfo));
+                let range = new vscode.Range(lineIndex, 0, lineIndex, lineOfText.text.length);
+                let diagnostic = new vscode.Diagnostic(range, errorInfo, level);
+                newdiagnostisc.push(diagnostic);
             }
         }
         this.diagnosticCollection.set(doc.uri, newdiagnostisc);
     }
     clearErrorInfo(doc) {
-        console.log("清空");
         if (this.diagnosticCollection.get(doc.uri)) {
             this.diagnosticCollection.delete(doc.uri);
         }
     }
-    createDiagnostic(doc, lineOfText, lineIndex, errorInfo) {
-        // find where in the line of thet the 'emoji' is mentioned
-        //    let index = lineOfText.text.indexOf(EMOJI);
-        // create range that represents, where in the document the word is
-        let range = new vscode.Range(lineIndex, 0, lineIndex, lineOfText.text.length);
-        let diagnostic = new vscode.Diagnostic(range, errorInfo, vscode.DiagnosticSeverity.Error);
-        //    diagnostic.code = EMOJI_MENTION;
-        return diagnostic;
-    }
-    checkOverrideFunc(body, doc) {
+    checkOverrideFunc(body, checkClasses, doc) {
         var _a;
         for (let obj of body) {
             if (obj.type !== 'FunctionDeclaration') {
@@ -80,92 +75,160 @@ class PyLuaCheck {
             if (obj.type === 'FunctionDeclaration' && ((_a = obj.identifier) === null || _a === void 0 ? void 0 : _a.type) === "MemberExpression") {
                 let memberExpression = obj.identifier;
                 let funcName = memberExpression.identifier.name;
-                for (let config of this.configs) {
-                    for (let overrideFuncName of config.overrideFunc) {
-                        if (funcName === overrideFuncName) {
-                            this.checkFuncBody(obj, funcName, doc);
+                let className = memberExpression.base.name;
+                let superClassName = this.getSuperClassNameByClassName(checkClasses, className);
+                if (superClassName === null) {
+                    continue;
+                }
+                let superClassConfig = this.getConfigBySuperClassName(superClassName);
+                if (superClassConfig === null) {
+                    continue;
+                }
+                console.log(superClassConfig.overrideFunc);
+                for (let overrideFuncName of superClassConfig.overrideFunc) {
+                    if (funcName === overrideFuncName) {
+                        console.log("检查", className, superClassName, funcName);
+                        let checkResult = this.checkFuncBody(obj, className, funcName);
+                        //检查没有写调用父类函数
+                        if (!checkResult.hasError && !checkResult.hasCalledSuperFunc) {
+                            let oriExpression = className + ':' + funcName;
+                            this.pushDiagnosticInfo(doc, oriExpression, "请增加" + className + ".super." + funcName + "(self)", vscode.DiagnosticSeverity.Error);
+                        }
+                        else if (!checkResult.hasCalledSuperFunc) {
+                            this.pushDiagnosticInfo(doc, checkResult.oriExpression, checkResult.info, checkResult.level);
                         }
                     }
                 }
             }
         }
     }
-    checkFuncBody(functionDecl, checkFuncName, doc) {
-        let className = functionDecl.identifier.base.name;
-        let hasError = false;
-        let hasCheck = false;
+    getSuperClassNameByClassName(checkClasses, className) {
+        for (let checkClass of checkClasses) {
+            if (checkClass.name === className) {
+                return checkClass.superName;
+            }
+        }
+        return null;
+    }
+    getConfigBySuperClassName(superClassName) {
+        for (let config of this.configs) {
+            if (config.name === superClassName) {
+                return config;
+            }
+        }
+        return null;
+    }
+    checkFuncBody(functionDecl, className, checkFuncName) {
         //检查 写了父类,但是写法不正确的情况
+        let checkResult = { hasError: false, hasCalledSuperFunc: false };
         for (let body of functionDecl.body) {
-            if (body.type === 'CallStatement' && body.expression.base.type === 'MemberExpression'
-                && body.expression.base.identifier.name === checkFuncName) {
-                hasCheck = true;
-                let callexpression = body.expression;
-                let nemberExpression = callexpression.base;
-                let callerName = nemberExpression.base.base.name;
-                let midName = nemberExpression.base.identifier.name;
-                let sign = nemberExpression.indexer;
-                let params = callexpression.arguments;
-                let oriExpression = callerName + '.' + midName + sign + checkFuncName;
-                if (callerName !== className || midName !== 'super' || sign !== '.' || params.length === 0) {
-                    this.pushErrorInfo(doc, oriExpression, "请改成" + className + ".super." + checkFuncName + "(self)");
-                    hasError = true;
-                    break;
+            if (checkResult.hasError || checkResult.hasCalledSuperFunc) {
+                break;
+            }
+            if (body.type === 'IfStatement') {
+                for (let clause of body.clauses) {
+                    if (checkResult.hasError || checkResult.hasCalledSuperFunc) {
+                        break;
+                    }
+                    let clauseBody = clause.body;
+                    for (let statement of clauseBody) {
+                        if (statement.type === 'CallStatement') {
+                            checkResult = this.checkCallStatement(statement, className, checkFuncName);
+                            if (checkResult.hasError || checkResult.hasCalledSuperFunc) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            else if (body.type === 'CallStatement') {
+                //CallStatement里面情况有直接调用父类函数,还有在回调函数调用
+                checkResult = this.checkCallStatement(body, className, checkFuncName);
+            }
+        }
+        return checkResult;
+    }
+    checkCallStatement(statement, className, checkFuncName) {
+        let callexpression = statement.expression;
+        if (callexpression.base.type !== 'MemberExpression') {
+            return { hasError: false, hasCalledSuperFunc: false };
+        }
+        let memberExpression = callexpression.base;
+        let funcName = memberExpression.identifier.name;
+        if (funcName === checkFuncName && memberExpression.base.type === 'MemberExpression') {
+            let memberExpressionBase = memberExpression.base;
+            let callerName = memberExpressionBase.base.name;
+            let propertyName = memberExpressionBase.identifier.name;
+            //确定调用函数用的是 . 还是 : 
+            let callFuncSign = memberExpression.indexer;
+            let params = callexpression.arguments;
+            //写了xxx.super.checkFuncName才去检查
+            if (propertyName === 'super') {
+                let oriExpression = callerName + '.' + propertyName + callFuncSign + checkFuncName;
+                if (callerName !== className || callFuncSign !== '.' || params.length === 0) {
+                    // this.pushErrorInfo(doc,oriExpression,"1请改成"+className+".super."+checkFuncName+"(self)");
+                    return { hasError: true, hasCalledSuperFunc: false, level: vscode.DiagnosticSeverity.Error, oriExpression: oriExpression, info: "正确写法: " + className + ".super." + checkFuncName + "(self)" };
                 }
                 if (params.length > 0) {
                     let firstParam = params[0].name;
                     if (firstParam !== 'self') {
-                        this.pushErrorInfo(doc, oriExpression, "请改成" + className + ".super." + checkFuncName + "(self)");
-                        hasError = true;
-                        break;
+                        return { hasError: true, hasCalledSuperFunc: false, level: vscode.DiagnosticSeverity.Error, oriExpression: oriExpression, info: " 正确写法:" + className + ".super." + checkFuncName + "(self)" };
+                    }
+                    else {
+                        console.log("检查到父类函数", oriExpression);
+                        return { hasError: false, hasCalledSuperFunc: true };
                     }
                 }
             }
         }
-        //检查没有写调用父类函数
-        if (!hasCheck) {
-            let oriExpression = className + ':' + checkFuncName;
-            this.pushErrorInfo(doc, oriExpression, "请增加" + className + ".super." + checkFuncName + "(self)");
-            hasError = true;
+        else {
+            //把父类函数通过匿名函数传递到其他函数使用检测
+            let params = callexpression.arguments;
+            for (let param of params) {
+                if (param.type === 'FunctionDeclaration') {
+                    let cunctionDeclaration = param;
+                    return this.checkFuncBody(cunctionDeclaration, className, checkFuncName);
+                }
+            }
         }
-        if (hasError === false) {
-            //清空当前
-            // this.clearErrorInfo(doc);
-        }
+        return { hasError: false, hasCalledSuperFunc: false };
     }
-    isContainSuperClass(body) {
+    //获得文件内所有要检查的类
+    getNeeCheckSuperClass(body) {
         if (this.configs.length === 0) {
-            return false;
+            return [];
         }
         // console.log(body);
-        let isCheck = false;
+        let needCheckClass = [];
+        let reg = new RegExp('"', "g");
         for (let obj of body) {
-            if (isCheck) {
-                break;
-            }
             if (obj.type !== 'LocalStatement') {
                 continue;
             }
             let localStatement = obj;
             for (let child of localStatement.init) {
-                if (isCheck) {
-                    break;
-                }
                 let callExpression = child;
                 if (callExpression.type === 'CallExpression' && callExpression.base.name === 'class') {
+                    // console.log(obj);
                     let args = callExpression.arguments;
-                    if (args.length === 0) {
+                    if (args.length < 2) {
                         continue;
                     }
                     //仅支持单继承检测
+                    let argClassName = args[0].raw;
+                    argClassName = argClassName.replace(reg, "");
+                    let className = obj.variables[0].name;
+                    // console.log("className = "+ className+"   "+argClassName);
                     let superClass = args[1];
                     if (superClass.type === 'CallExpression' && (superClass.base.name === 'require' || superClass.base.name === 'import')) {
                         let requireArgs = superClass.arguments;
                         if (requireArgs.length > 0) {
                             let firstArg = requireArgs[0];
-                            // console.log(firstArg);
                             for (let config of this.configs) {
-                                if (firstArg.raw.indexOf(config.name) !== -1) {
-                                    isCheck = true;
+                                let superClassName = firstArg.raw.replace(reg, "");
+                                if (superClassName === config.name) {
+                                    // superClassName = config.name;
+                                    needCheckClass.push({ name: className, superName: config.name });
                                     break;
                                 }
                             }
@@ -174,7 +237,7 @@ class PyLuaCheck {
                 }
             }
         }
-        return isCheck;
+        return needCheckClass;
     }
 }
 function registerCheckLua(context) {
@@ -185,15 +248,19 @@ function registerCheckLua(context) {
     //     PyLuaCheck.instance.startCheck(event.document);
     // }));
     context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(event => {
+        console.log("onDidSaveTextDocument");
         PyLuaCheck.instance.startCheck(event);
     }));
     context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(event => {
+        console.log("onDidOpenTextDocument");
         PyLuaCheck.instance.startCheck(event);
     }));
     context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(event => {
+        console.log("onDidCloseTextDocument");
         PyLuaCheck.instance.startCheck(event);
     }));
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(event => {
+        console.log("onDidChangeActiveTextEditor");
         PyLuaCheck.instance.startCheck(event === null || event === void 0 ? void 0 : event.document);
     }));
 }

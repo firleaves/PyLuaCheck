@@ -2,7 +2,7 @@
 	"name": "pyluacheck",
 	"displayName": "PyLuaCheck",
 	"description": "py project lua check",
-	"version": "0.0.1",
+	"version": "0.0.3",
 	"engines": {
 		"vscode": "^1.44.0"
 	},
@@ -12,6 +12,7 @@
 	"activationEvents": [
 		"onLanguage:lua"
 	],
+	"icon": "images/pyluacheck_icon.png",
 	"main": "./out/extension.js",
 	"contributes": {
 		"configuration": {
@@ -28,7 +29,7 @@
 							]
 						},
 						{
-							"name":"BaseUI",
+							"name":"UI.BaseUI",
 							"overrideFunc":[
 								"Ctor","Close"
 							]
@@ -67,5 +68,5 @@
 	"dependencies": {
 		"luaparse": "^0.3.0"
 	},
-	"publisher": "someone"
+	"publisher": "firleaves"
 }
